@@ -7,24 +7,29 @@ pub use slice::{ParallelSlice, ParallelSliceMut};
 mod task;
 pub use task::Task;
 
-#[cfg(not(target_arch = "wasm32"))]
+//#[cfg(not(target_arch = "wasm32"))]
 mod task_pool;
-#[cfg(not(target_arch = "wasm32"))]
+//#[cfg(not(target_arch = "wasm32"))]
 pub use task_pool::{Scope, TaskPool, TaskPoolBuilder};
 
+#[cfg(target_arch = "wasm32")]
+pub(crate) mod wasm_worker;
+
+/*
 #[cfg(target_arch = "wasm32")]
 mod single_threaded_task_pool;
 #[cfg(target_arch = "wasm32")]
 pub use single_threaded_task_pool::{Scope, TaskPool, TaskPoolBuilder, ThreadExecutor};
+*/
 
 mod usages;
-#[cfg(not(target_arch = "wasm32"))]
+//#[cfg(not(target_arch = "wasm32"))]
 pub use usages::tick_global_task_pools_on_main_thread;
 pub use usages::{AsyncComputeTaskPool, ComputeTaskPool, IoTaskPool};
 
-#[cfg(not(target_arch = "wasm32"))]
+//#[cfg(not(target_arch = "wasm32"))]
 mod thread_executor;
-#[cfg(not(target_arch = "wasm32"))]
+//#[cfg(not(target_arch = "wasm32"))]
 pub use thread_executor::{ThreadExecutor, ThreadExecutorTicker};
 
 mod iter;
@@ -49,7 +54,13 @@ use std::num::NonZeroUsize;
 ///
 /// This will always return at least 1.
 pub fn available_parallelism() -> usize {
-    std::thread::available_parallelism()
+    #[cfg(not(target_arch = "wasm32"))]
+    return std::thread::available_parallelism()
         .map(NonZeroUsize::get)
-        .unwrap_or(1)
+        .unwrap_or(1);
+    #[cfg(target_arch = "wasm32")]
+    return web_sys::window()
+        .expect("Missing Window")
+        .navigator()
+        .hardware_concurrency() as _;
 }
