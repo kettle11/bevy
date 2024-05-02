@@ -13,7 +13,8 @@ struct Rotatable {
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
-        .add_systems((setup.on_startup(), rotate_cube))
+        .add_systems(Startup, setup)
+        .add_systems(Update, rotate_cube)
         .run();
 }
 
@@ -25,8 +26,8 @@ fn setup(
     // Spawn a cube to rotate.
     commands.spawn((
         PbrBundle {
-            mesh: meshes.add(Mesh::from(shape::Cube { size: 1.0 })),
-            material: materials.add(Color::WHITE.into()),
+            mesh: meshes.add(Cuboid::default()),
+            material: materials.add(Color::WHITE),
             transform: Transform::from_translation(Vec3::ZERO),
             ..default()
         },
@@ -40,8 +41,8 @@ fn setup(
     });
 
     // Add a light source so we can see clearly.
-    commands.spawn(PointLightBundle {
-        transform: Transform::from_translation(Vec3::ONE * 3.0),
+    commands.spawn(DirectionalLightBundle {
+        transform: Transform::from_xyz(3.0, 3.0, 3.0).looking_at(Vec3::ZERO, Vec3::Y),
         ..default()
     });
 }
