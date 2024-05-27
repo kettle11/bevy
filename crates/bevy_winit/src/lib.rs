@@ -67,6 +67,12 @@ use crate::accessibility::{AccessKitAdapters, AccessKitPlugin, WinitActionHandle
 
 use crate::converters::convert_winit_theme;
 
+mod event_loop_wrapper;
+pub use event_loop_wrapper::*;
+
+#[cfg(feature = "bevy_dedicated_web_worker")]
+pub use bevy_wasm_threads;
+
 /// [`AndroidApp`] provides an interface to query the application state as well as monitor events
 /// (for example lifecycle and input events).
 #[cfg(target_os = "android")]
@@ -146,9 +152,8 @@ impl Plugin for WinitPlugin {
 
         app.add_plugins(AccessKitPlugin);
 
-        let event_loop = event_loop_builder
-            .build()
-            .expect("Failed to build event loop");
+        let event_loop =
+            BevyEventLoopWrapper::new(event_loop_builder).expect("Failed to build event loop");
 
         // iOS, macOS, and Android don't like it if you create windows before the event loop is
         // initialized.
@@ -274,7 +279,7 @@ pub fn winit_runner(mut app: App) -> AppExit {
 
     let event_loop = app
         .world_mut()
-        .remove_non_send_resource::<EventLoop<UserEvent>>()
+        .remove_non_send_resource::<BevyEventLoopWrapper>()
         .unwrap();
 
     app.world_mut()
@@ -303,7 +308,7 @@ pub fn winit_runner(mut app: App) -> AppExit {
         SystemState::<CreateWindowParams<Added<Window>>>::from_world(app.world_mut());
     let mut winit_events = Vec::default();
     // set up the event loop
-    let event_handler = move |event, event_loop: &EventLoopWindowTarget<UserEvent>| {
+    let event_handler = move |event, event_loop: &BevyEventLoopWrapper| {
         let mut exit_status = handle_exit_status.lock().unwrap();
 
         handle_winit_event(
@@ -349,7 +354,7 @@ fn handle_winit_event(
     winit_events: &mut Vec<WinitEvent>,
     exit_status: &mut AppExit,
     event: Event<UserEvent>,
-    event_loop: &EventLoopWindowTarget<UserEvent>,
+    event_loop: &BevyEventLoopWrapper,
 ) {
     #[cfg(feature = "trace")]
     let _span = bevy_utils::tracing::info_span!("winit event_handler").entered();
@@ -743,7 +748,7 @@ fn run_app_update_if_should(
     runner_state: &mut WinitAppRunnerState,
     app: &mut App,
     focused_windows_state: &mut SystemState<(Res<WinitSettings>, Query<&Window>)>,
-    event_loop: &EventLoopWindowTarget<UserEvent>,
+    event_loop: &BevyEventLoopWrapper,
     create_window: &mut SystemState<CreateWindowParams<Added<Window>>>,
     redraw_event_reader: &mut ManualEventReader<RequestRedraw>,
     winit_events: &mut Vec<WinitEvent>,

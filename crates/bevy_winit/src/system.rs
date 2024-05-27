@@ -24,7 +24,8 @@ use crate::{
         self, convert_enabled_buttons, convert_window_level, convert_window_theme,
         convert_winit_theme,
     },
-    get_best_videomode, get_fitting_videomode, CreateWindowParams, WinitWindows,
+    get_best_videomode, get_fitting_videomode, BevyEventLoopWrapper, CreateWindowParams,
+    WinitWindows,
 };
 
 /// Creates new windows on the [`winit`] backend for each entity with a newly-added
@@ -34,7 +35,7 @@ use crate::{
 /// default values.
 #[allow(clippy::too_many_arguments)]
 pub fn create_windows<F: QueryFilter + 'static>(
-    event_loop: &EventLoopWindowTarget<crate::UserEvent>,
+    event_loop: &BevyEventLoopWrapper,
     (
         mut commands,
         mut created_windows,

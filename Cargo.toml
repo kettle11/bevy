@@ -79,6 +79,7 @@ default = [
   "default_font",
   "webgl2",
   "sysinfo_plugin",
+  "bevy_dedicated_web_worker",
 ]
 
 # Force dynamic linking, which improves iterative compile times
@@ -329,6 +330,9 @@ meshlet_processor = ["bevy_internal/meshlet_processor"]
 
 # Enable support for the ios_simulator by downgrading some rendering capabilities
 ios_simulator = ["bevy_internal/ios_simulator"]
+
+# On web allows Bevy to be run in its own dedicated web worker and enables multithreading.
+bevy_dedicated_web_worker = ["bevy_internal/bevy_dedicated_web_worker"]
 
 [dependencies]
 bevy_internal = { path = "crates/bevy_internal", version = "0.14.0-dev", default-features = false }

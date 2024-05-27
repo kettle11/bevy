@@ -14,6 +14,7 @@ wayland = ["winit/wayland", "winit/wayland-csd-adwaita"]
 x11 = ["winit/x11"]
 accesskit_unix = ["accesskit_winit/accesskit_unix", "accesskit_winit/async-io"]
 serialize = ["serde"]
+bevy_dedicated_web_worker = ["bevy_wasm_threads"]
 
 [dependencies]
 # bevy
@@ -28,6 +29,7 @@ bevy_reflect = { path = "../bevy_reflect", version = "0.14.0-dev" }
 bevy_window = { path = "../bevy_window", version = "0.14.0-dev" }
 bevy_utils = { path = "../bevy_utils", version = "0.14.0-dev" }
 bevy_tasks = { path = "../bevy_tasks", version = "0.14.0-dev" }
+bevy_wasm_threads = { path = "../bevy_wasm_threads", optional = true, version = "0.14.0-dev" }
 
 # other
 # feature rwh_06 refers to window_raw_handle@v0.6

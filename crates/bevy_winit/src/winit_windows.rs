@@ -12,6 +12,7 @@ use winit::{
     monitor::MonitorHandle,
 };
 
+use crate::BevyEventLoopWrapper;
 use crate::{
     accessibility::{prepare_accessibility_for_window, AccessKitAdapters, WinitActionHandlers},
     converters::{convert_enabled_buttons, convert_window_level, convert_window_theme},
@@ -37,24 +38,32 @@ impl WinitWindows {
     /// Creates a `winit` window and associates it with our entity.
     pub fn create_window(
         &mut self,
-        event_loop: &winit::event_loop::EventLoopWindowTarget<crate::UserEvent>,
+        event_loop: &BevyEventLoopWrapper,
         entity: Entity,
         window: &Window,
         adapters: &mut AccessKitAdapters,
         handlers: &mut WinitActionHandlers,
         accessibility_requested: &AccessibilityRequested,
     ) -> &WindowWrapper<winit::window::Window> {
+        bevy_utils::tracing::info!("HERE BEFORE BUILDING WINDOW -1");
+
         let mut winit_window_builder = winit::window::WindowBuilder::new();
+
+        bevy_utils::tracing::info!("HERE BEFORE BUILDING WINDOW -0.9");
 
         // Due to a UIA limitation, winit windows need to be invisible for the
         // AccessKit adapter is initialized.
         winit_window_builder = winit_window_builder.with_visible(false);
+
+        bevy_utils::tracing::info!("HERE BEFORE BUILDING WINDOW -1");
 
         winit_window_builder = match window.mode {
             WindowMode::BorderlessFullscreen => winit_window_builder.with_fullscreen(Some(
                 winit::window::Fullscreen::Borderless(event_loop.primary_monitor()),
             )),
             mode @ (WindowMode::Fullscreen | WindowMode::SizedFullscreen) => {
+                bevy_utils::tracing::info!("HERE WINDOWED");
+
                 if let Some(primary_monitor) = event_loop.primary_monitor() {
                     let videomode = match mode {
                         WindowMode::Fullscreen => get_best_videomode(&primary_monitor),
@@ -74,6 +83,8 @@ impl WinitWindows {
                 }
             }
             WindowMode::Windowed => {
+                bevy_utils::tracing::info!("HERE WINDOWED");
+
                 if let Some(position) = winit_window_position(
                     &window.position,
                     &window.resolution,
@@ -92,6 +103,8 @@ impl WinitWindows {
                 }
             }
         };
+
+        bevy_utils::tracing::info!("HERE BEFORE BUILDING WINDOW -0.5");
 
         winit_window_builder = winit_window_builder
             .with_window_level(convert_window_level(window.window_level))
@@ -162,6 +175,8 @@ impl WinitWindows {
             }
         }
 
+        bevy_utils::tracing::info!("HERE BEFORE BUILDING WINDOW -0.2");
+
         let constraints = window.resize_constraints.check_constraints();
         let min_inner_size = LogicalSize {
             width: constraints.min_width,
@@ -183,6 +198,8 @@ impl WinitWindows {
 
         #[allow(unused_mut)]
         let mut winit_window_builder = winit_window_builder.with_title(window.title.as_str());
+
+        bevy_utils::tracing::info!("HERE BEFORE BUILDING WINDOW 0");
 
         #[cfg(target_arch = "wasm32")]
         {
@@ -208,7 +225,11 @@ impl WinitWindows {
             winit_window_builder = winit_window_builder.with_append(true);
         }
 
-        let winit_window = winit_window_builder.build(event_loop).unwrap();
+        bevy_utils::tracing::info!("HERE BEFORE BUILDING WINDOW");
+
+        let winit_window = event_loop.build_window(winit_window_builder).unwrap();
+
+        bevy_utils::tracing::info!("HERE AFTER BUILDING WINDOW");
         let name = window.title.clone();
         prepare_accessibility_for_window(
             &winit_window,
