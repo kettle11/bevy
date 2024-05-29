@@ -1,0 +1,25 @@
+[package]
+name = "bevy_winit_offscreen"
+version = "0.14.0-dev"
+edition = "2021"
+description = "A wrapper around Winit to facilitate offscreen canvas use."
+homepage = "https://bevyengine.org"
+repository = "https://github.com/bevyengine/bevy"
+license = "MIT OR Apache-2.0"
+keywords = ["bevy"]
+
+[features]
+
+[dependencies]
+winit = { version = "0.30", default-features = false, features = ["rwh_06"] }
+
+[dev-dependencies]
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+
+[lints]
+workspace = true
+
+[package.metadata.docs.rs]
+rustdoc-args = ["-Zunstable-options", "--cfg", "docsrs"]
+all-features = true
