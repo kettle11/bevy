@@ -23,6 +23,8 @@ use winit::event::{DeviceEvent, DeviceId, StartCause, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::WindowId;
 
+use bevy_winit_offscreen::{WrappedActiveEventLoop, WrappedApplicationHandler, WrappedEventLoop};
+
 #[allow(deprecated)]
 use bevy_window::{
     AppLifecycle, CursorEntered, CursorLeft, CursorMoved, FileDragAndDrop, Ime, ReceivedCharacter,
@@ -123,8 +125,8 @@ impl<T: Event> WinitAppRunnerState<T> {
     }
 }
 
-impl<T: Event> ApplicationHandler<T> for WinitAppRunnerState<T> {
-    fn new_events(&mut self, event_loop: &ActiveEventLoop, cause: StartCause) {
+impl<T: Event> WrappedApplicationHandler<T> for WinitAppRunnerState<T> {
+    fn new_events(&mut self, event_loop: &WrappedActiveEventLoop, cause: StartCause) {
         if event_loop.exiting() {
             return;
         }
@@ -156,13 +158,13 @@ impl<T: Event> ApplicationHandler<T> for WinitAppRunnerState<T> {
         };
     }
 
-    fn resumed(&mut self, _event_loop: &ActiveEventLoop) {
+    fn resumed(&mut self, _event_loop: &WrappedActiveEventLoop) {
         // Mark the state as `WillResume`. This will let the schedule run one extra time
         // when actually resuming the app
         self.lifecycle = AppLifecycle::WillResume;
     }
 
-    fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: T) {
+    fn user_event(&mut self, _event_loop: &WrappedActiveEventLoop, event: T) {
         self.user_event_received = true;
 
         self.world_mut().send_event(event);
@@ -171,7 +173,7 @@ impl<T: Event> ApplicationHandler<T> for WinitAppRunnerState<T> {
 
     fn window_event(
         &mut self,
-        _event_loop: &ActiveEventLoop,
+        _event_loop: &WrappedActiveEventLoop,
         window_id: WindowId,
         event: WindowEvent,
     ) {
@@ -391,7 +393,7 @@ impl<T: Event> ApplicationHandler<T> for WinitAppRunnerState<T> {
 
     fn device_event(
         &mut self,
-        _event_loop: &ActiveEventLoop,
+        _event_loop: &WrappedActiveEventLoop,
         _device_id: DeviceId,
         event: DeviceEvent,
     ) {
@@ -403,7 +405,7 @@ impl<T: Event> ApplicationHandler<T> for WinitAppRunnerState<T> {
         }
     }
 
-    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+    fn about_to_wait(&mut self, event_loop: &WrappedActiveEventLoop) {
         // create any new windows
         // (even if app did not update, some may have been created by plugin setup)
         let mut create_window =
@@ -586,13 +588,13 @@ impl<T: Event> ApplicationHandler<T> for WinitAppRunnerState<T> {
         }
     }
 
-    fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
+    fn suspended(&mut self, _event_loop: &WrappedActiveEventLoop) {
         // Mark the state as `WillSuspend`. This will let the schedule run one last time
         // before actually suspending to let the application react
         self.lifecycle = AppLifecycle::WillSuspend;
     }
 
-    fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+    fn exiting(&mut self, _event_loop: &WrappedActiveEventLoop) {
         let world = self.world_mut();
         world.clear_all();
     }
@@ -740,7 +742,7 @@ pub fn winit_runner<T: Event>(mut app: App) -> AppExit {
 
     let event_loop = app
         .world_mut()
-        .remove_non_send_resource::<EventLoop<T>>()
+        .remove_non_send_resource::<WrappedEventLoop<T>>()
         .unwrap();
 
     app.world_mut()
@@ -750,13 +752,17 @@ pub fn winit_runner<T: Event>(mut app: App) -> AppExit {
 
     trace!("starting winit event loop");
     // TODO(clean): the winit docs mention using `spawn` instead of `run` on WASM.
-    if let Err(err) = event_loop.run_app(&mut runner_state) {
+
+    if let Err(err) = event_loop.spawn_or_run_app(runner_state) {
         error!("winit event loop returned an error: {err}");
     }
 
+    // TODO: Fix this:
+    panic!();
+
     // If everything is working correctly then the event loop only exits after it's sent an exit code.
-    runner_state.app_exit.unwrap_or_else(|| {
-        error!("Failed to receive a app exit code! This is a bug");
-        AppExit::error()
-    })
+    // runner_state.app_exit.unwrap_or_else(|| {
+    //     error!("Failed to receive a app exit code! This is a bug");
+    //     AppExit::error()
+    // })
 }

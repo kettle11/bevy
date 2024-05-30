@@ -12,6 +12,7 @@ use bevy_window::{
     WindowMode, WindowResized,
 };
 
+use bevy_winit_offscreen::WrappedActiveEventLoop;
 use winit::dpi::{LogicalPosition, LogicalSize, PhysicalPosition, PhysicalSize};
 use winit::event_loop::ActiveEventLoop;
 
@@ -34,7 +35,7 @@ use crate::{
 /// default values.
 #[allow(clippy::too_many_arguments)]
 pub fn create_windows<F: QueryFilter + 'static>(
-    event_loop: &ActiveEventLoop,
+    event_loop: &WrappedActiveEventLoop,
     (
         mut commands,
         mut created_windows,

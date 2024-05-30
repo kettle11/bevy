@@ -338,6 +338,8 @@ ios_simulator = ["bevy_internal/ios_simulator"]
 # Enable built in global state machines
 bevy_state = ["bevy_internal/bevy_state"]
 
+offscreen_canvas = ["bevy_internal/offscreen_canvas"]
+
 [dependencies]
 bevy_internal = { path = "crates/bevy_internal", version = "0.14.0-dev", default-features = false }
 

@@ -47,6 +47,8 @@ crates=(
     bevy_internal
     bevy_dylib
     bevy_color
+    bevy_wasm_threads
+    bevy_winit_offscreen
 )
 
 if [ -n "$(git status --porcelain)" ]; then

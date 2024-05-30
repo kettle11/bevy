@@ -1,8 +1,8 @@
 [package]
-name = "bevy_winit_offscreen"
+name = "bevy_wasm_threads"
 version = "0.14.0-dev"
 edition = "2021"
-description = "A wrapper around Winit to facilitate offscreen canvas use."
+description = "Utilities to assist multithreaded web Bevy"
 homepage = "https://bevyengine.org"
 repository = "https://github.com/bevyengine/bevy"
 license = "MIT OR Apache-2.0"
@@ -11,9 +11,6 @@ keywords = ["bevy"]
 [features]
 
 [dependencies]
-winit = { version = "0.30", default-features = false, features = ["rwh_06"] }
-
-[target.'cfg(target_arch = "wasm32")'.dependencies]
 send_wrapper = "0.6.0"
 wasm-bindgen = { version = "0.2" }
 web-sys = { version = "0.3", features = [
@@ -22,10 +19,7 @@ web-sys = { version = "0.3", features = [
     "WorkerOptions",
     "WorkerType",
 ] }
-bevy_wasm_threads = { path = "../bevy_wasm_threads", version = "0.14.0-dev" }
 bevy_utils = { path = "../bevy_utils", version = "0.14.0-dev" }
-
-[dev-dependencies]
 
 [lints]
 workspace = true

@@ -40,6 +40,9 @@ mod winit_config;
 pub mod winit_event;
 mod winit_windows;
 
+#[cfg(feature = "offscreen_canvas")]
+pub use bevy_wasm_threads::browser_run_off_main;
+
 /// [`AndroidApp`] provides an interface to query the application state as well as monitor events
 /// (for example lifecycle and input events).
 #[cfg(target_os = "android")]
@@ -127,8 +130,7 @@ impl<T: Event> Plugin for WinitPlugin<T> {
 
         app.add_plugins(AccessKitPlugin);
 
-        let event_loop = event_loop_builder
-            .build()
+        let event_loop = bevy_winit_offscreen::WrappedEventLoop::build(event_loop_builder)
             .expect("Failed to build event loop");
 
         // `winit`'s windows are bound to the event loop that created them, so the event loop must

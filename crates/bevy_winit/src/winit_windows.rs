@@ -7,6 +7,7 @@ use bevy_window::{
     CursorGrabMode, Window, WindowMode, WindowPosition, WindowResolution, WindowWrapper,
 };
 
+use bevy_winit_offscreen::WrappedActiveEventLoop;
 use winit::{
     dpi::{LogicalSize, PhysicalPosition},
     event_loop::ActiveEventLoop,
@@ -41,7 +42,7 @@ impl WinitWindows {
     /// Creates a `winit` window and associates it with our entity.
     pub fn create_window(
         &mut self,
-        event_loop: &ActiveEventLoop,
+        event_loop: &WrappedActiveEventLoop,
         entity: Entity,
         window: &Window,
         adapters: &mut AccessKitAdapters,
