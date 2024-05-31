@@ -1,19 +1,22 @@
 //! This crate wraps Winit to more easily allow a browser OffScreenCanvas to be used.
 
-use bevy_utils::hashbrown::HashMap;
-use std::cell::RefCell;
+use bevy_utils::hashbrown::{HashMap, HashSet};
+use std::cell::{OnceCell, RefCell};
 use wasm_bindgen::JsValue;
+use web_sys::Window;
 use winit::error::EventLoopError;
 use winit::event::{DeviceEvent, DeviceId, StartCause, WindowEvent};
 use winit::event_loop::{self, ActiveEventLoop, EventLoop, EventLoopProxy};
 use winit::platform::web::{self, EventLoopExtWebSys};
 use winit::window::{CustomCursorSource, WindowAttributes, WindowId};
 
+pub use bevy_wasm_threads::{run_and_block_on_browser_main, run_on_browser_main};
+
 #[cfg(target_arch = "wasm32")]
 use std::sync::mpsc::{channel, Receiver, Sender};
 
 enum EntryReason {
-    AnimationFrame,
+    AnimationFrame { window_id: winit::window::WindowId },
     WorkerMessage,
 }
 
@@ -25,15 +28,31 @@ thread_local! {
     static OFFSCREEN_CANVASES: RefCell<HashMap<String, web_sys::OffscreenCanvas>> = RefCell::new(HashMap::new());
 }
 
+struct EventLoopWaker {
+    wake_fn: Box<dyn Fn()>,
+}
+
+impl EventLoopWaker {
+    pub fn new<T: 'static>(event_loop_proxy: EventLoopProxy<UserEvent<T>>) -> Self {
+        Self {
+            wake_fn: Box::new(move || {
+                let _ = event_loop_proxy.send_event(UserEvent::WakeUp);
+            }),
+        }
+    }
+
+    pub fn wake(&self) {
+        (self.wake_fn)()
+    }
+}
+
 #[cfg(target_arch = "wasm32")]
 pub struct WinitOffscreen {}
 
 #[cfg(target_arch = "wasm32")]
 impl WinitOffscreen {
-    pub fn init(f: impl FnOnce() + Send + 'static) -> Self {
+    pub fn init(canvas_selector: &str, f: impl FnOnce() + Send + 'static) -> Self {
         bevy_wasm_threads::run_bevy_main(move || {
-            web_sys::js_sys::eval("console.log('HERE IN BEVY MAIN WAITING FOR CANVAS')").unwrap();
-
             let mut f = Some(f);
 
             // Wait for the first transferred canvas before running setup.
@@ -44,7 +63,9 @@ impl WinitOffscreen {
                 (f.take().unwrap())();
             }));
         });
-        Self {}
+        let s = Self {};
+        s.transfer_canvas_to_offscreen(canvas_selector);
+        s
     }
 
     /// Sends the canvas specified to the OffScreen thread.
@@ -93,7 +114,7 @@ fn check_for_transferred_canvas(event: &web_sys::MessageEvent) {
     if let Ok(value) = web_sys::js_sys::Reflect::get(&data, &"offscreen_canvas".into()) {
         let offscreen_canvas = value
             .dyn_into::<web_sys::OffscreenCanvas>()
-            .expect("Expected a canvas selector");
+            .expect("Expected an OffscreenCanvas message");
 
         let name = web_sys::js_sys::Reflect::get(&data, &"offscreen_canvas_name".into()).unwrap();
         let name = name.as_string().unwrap();
@@ -123,6 +144,9 @@ struct EventLoopForwarder<T> {
 #[cfg(target_arch = "wasm32")]
 impl<T> EventLoopForwarder<T> {
     fn send_event(&mut self, event_loop: &event_loop::ActiveEventLoop, event: WinitEvent<T>) {
+        // Make sure other events sent to the main thread are handled.
+        bevy_wasm_threads::handle_browser_main_tasks();
+
         // Process incoming events that need the ActiveEventLoop.
         while let Ok(action) = self.to_browser_main_receiver.try_recv() {
             action(event_loop);
@@ -204,36 +228,56 @@ enum WinitEvent<T> {
     MemoryWarning,
 }
 
+/// A custom winit event to be sent to the event loop.
+pub enum UserEvent<T> {
+    /// Wakes up the event loop
+    WakeUp,
+    /// A custom user event
+    Custom(T),
+}
+
 /// Corresponds to [winit::event_loop::EventLoop]
 /// but `WrappedEventLoop` can be used from off the browser's main thread
 pub struct WrappedEventLoop<T: 'static> {
     #[cfg(target_arch = "wasm32")]
-    browser_main_event_loop: bevy_wasm_threads::BrowserMainType<EventLoop<T>>,
+    browser_main_event_loop: bevy_wasm_threads::BrowserMainType<EventLoop<UserEvent<T>>>,
 
     #[cfg(not(target_arch = "wasm32"))]
     event_loop: winit::event_loop::EventLoop<T>,
+    event_loop_waker: EventLoopWaker,
 }
 
 impl<T: Send> WrappedEventLoop<T> {
     /// Builds the `WrappedEventLoop`
     pub fn build(
-        mut event_loop_builder: winit::event_loop::EventLoopBuilder<T>,
+        mut event_loop_builder: winit::event_loop::EventLoopBuilder<UserEvent<T>>,
     ) -> Result<WrappedEventLoop<T>, EventLoopError> {
         #[cfg(target_arch = "wasm32")]
         {
-            let browser_main_event_loop = bevy_wasm_threads::run_and_block_on_browser_main::<
-                Result<
-                    bevy_wasm_threads::BrowserMainType<winit::event_loop::EventLoop<T>>,
-                    winit::error::EventLoopError,
-                >,
-            >(move || {
-                Ok(bevy_wasm_threads::BrowserMainType::new(
-                    event_loop_builder.build()?,
-                ))
-            })?;
+            let (browser_main_event_loop, event_loop_proxy) =
+                bevy_wasm_threads::run_and_block_on_browser_main::<
+                    Result<
+                        (
+                            bevy_wasm_threads::BrowserMainType<
+                                winit::event_loop::EventLoop<UserEvent<T>>,
+                            >,
+                            winit::event_loop::EventLoopProxy<UserEvent<T>>,
+                        ),
+                        winit::error::EventLoopError,
+                    >,
+                >(move || {
+                    let event_loop = event_loop_builder.build()?;
+
+                    let event_loop_proxy = event_loop.create_proxy();
+                    Ok((
+                        bevy_wasm_threads::BrowserMainType::new(event_loop),
+                        event_loop_proxy,
+                    ))
+                })?;
 
             Ok(Self {
                 browser_main_event_loop,
+                event_loop_waker: EventLoopWaker::new(event_loop_proxy),
             })
         }
 
@@ -242,7 +286,7 @@ impl<T: Send> WrappedEventLoop<T> {
     }
 
     /// Corresponds to [winit::event_loop::EventLoop::create_proxy]
-    pub fn create_proxy(&self) -> EventLoopProxy<T> {
+    pub fn create_proxy(&self) -> EventLoopProxy<UserEvent<T>> {
         let browser_main_event_loop = self.browser_main_event_loop.clone();
 
         bevy_wasm_threads::run_and_block_on_browser_main(move || {
@@ -264,8 +308,6 @@ impl<T: Send> WrappedEventLoop<T> {
             let (to_browser_main_sender, to_browser_main_receiver) = channel();
 
             bevy_wasm_threads::run_on_browser_main(move || {
-                web_sys::js_sys::eval("console.log('RUNNING EVENT LOOP')").unwrap();
-
                 let event_loop = self.browser_main_event_loop.take().unwrap();
 
                 let event_loop_forwarder = EventLoopForwarder {
@@ -277,18 +319,21 @@ impl<T: Send> WrappedEventLoop<T> {
             });
 
             let mut event_loop = WrappedActiveEventLoop {
+                event_loop_waker: self.event_loop_waker,
                 to_browser_main_sender,
+                redrawing: RefCell::new(HashSet::new()),
             };
+
+            // Whenever the main thread winit is woken up it's
+            // sent a WakeUp, which also causes an AboutToWait to be sent.
+            // This can cause a back and forth, and many spurious wakeups,
+            // so skim ones that follow a "WakeUp" call.
+            let mut skip_next_about_to_wait = 0;
 
             ENTRY_POINT.with(|entry_point| {
                 *entry_point.borrow_mut() = Box::new(move |entry_reason| {
-                    match entry_reason {
-                        EntryReason::AnimationFrame => {
-                            // TODO: Insert animation frame
-                            todo!()
-                        }
-                        _ => {}
-                    }
+                    web_sys::js_sys::eval("console.log('$RESPONDING TO BEVY MAIN EVENTS')")
+                        .unwrap();
 
                     // Respond to incoming winit events
                     while let Ok(event) = to_bevy_main_receiver.try_recv() {
@@ -297,40 +342,70 @@ impl<T: Send> WrappedEventLoop<T> {
                                 app.new_events(&mut event_loop, cause)
                             }
                             WinitEvent::Resumed => app.resumed(&mut event_loop),
-                            WinitEvent::UserEvent { event } => {
-                                app.user_event(&mut event_loop, event)
-                            }
+                            WinitEvent::UserEvent { event } => match event {
+                                UserEvent::WakeUp => {
+                                    skip_next_about_to_wait += 1;
+                                }
+                                UserEvent::Custom(t) => app.user_event(&mut event_loop, t),
+                            },
                             WinitEvent::WindowEvent { window_id, event } => {
                                 app.window_event(&mut event_loop, window_id, event)
                             }
                             WinitEvent::DeviceEvent { device_id, event } => {
                                 app.device_event(&mut event_loop, device_id, event)
                             }
-                            WinitEvent::AboutToWait => app.about_to_wait(&mut event_loop),
+                            WinitEvent::AboutToWait => {
+                                if skip_next_about_to_wait > 0 {
+                                    skip_next_about_to_wait -= 1;
+                                    continue;
+                                }
+                                app.about_to_wait(&mut event_loop)
+                            }
                             WinitEvent::Suspended => app.suspended(&mut event_loop),
                             WinitEvent::Exiting => app.exiting(&mut event_loop),
                             WinitEvent::MemoryWarning => app.memory_warning(&mut event_loop),
                         }
                     }
+                    web_sys::js_sys::eval("console.log('$DONE WITH BEVY MAIN EVENTS')").unwrap();
 
-                    // TODO: Respond to animation frames.
+                    match entry_reason {
+                        EntryReason::AnimationFrame { window_id } => {
+                            web_sys::js_sys::eval("console.log('ANIMATION FRAME')").unwrap();
+
+                            event_loop.redrawing.borrow_mut().remove(&window_id);
+
+                            // Insert a synthetic redraw event.
+                            app.window_event(
+                                &mut event_loop,
+                                window_id,
+                                WindowEvent::RedrawRequested,
+                            );
+                            // Imitate normal winit events.
+                            app.about_to_wait(&mut event_loop);
+                        }
+                        _ => {}
+                    }
                 });
             });
 
             // When this worker thread receives a message call the entry point.
             bevy_wasm_threads::set_self_on_message(Box::new(move |event| {
+                web_sys::js_sys::eval("console.log('RECEIVED MESSAGE')").unwrap();
+
                 check_for_transferred_canvas(&event);
 
                 ENTRY_POINT.with(|entry_point| {
                     (entry_point.borrow_mut())(EntryReason::WorkerMessage);
-                })
+                });
+                web_sys::js_sys::eval("console.log('RETURNING TO TOP')").unwrap();
             }));
 
-            // Throw an error that imitate's Winit's control flow hack.
-            // This unwinds the stack and prevents a return.
-            wasm_bindgen::throw_str(
-                "Using exceptions for control flow, don't mind me. This isn't actually an error!",
-            );
+            Ok(())
+            // // Throw an error that imitate's Winit's control flow hack.
+            // // This prevents a return.
+            // wasm_bindgen::throw_str(
+            //     "Using exceptions for control flow, don't mind me. This isn't actually an error!",
+            // );
         }
 
         #[cfg(not(target_arch = "wasm32"))]
@@ -341,6 +416,8 @@ impl<T: Send> WrappedEventLoop<T> {
 /// Wraps [winit::event_loop::ActiveEventLoop] so that it can be used from off the browser's main thread on web.
 pub struct WrappedActiveEventLoop {
     to_browser_main_sender: Sender<Box<dyn FnOnce(&ActiveEventLoop) + Send + 'static>>,
+    event_loop_waker: EventLoopWaker,
+    redrawing: RefCell<HashSet<WindowId>>,
 }
 
 impl WrappedActiveEventLoop {
@@ -352,7 +429,13 @@ impl WrappedActiveEventLoop {
                 sender.send(v).unwrap();
             }))
             .unwrap();
-        receiver.recv().unwrap()
+
+        self.event_loop_waker.wake();
+
+        web_sys::js_sys::eval("console.log('WAITING ON MAIN HERE1')").unwrap();
+        let result = receiver.recv().unwrap();
+        web_sys::js_sys::eval("console.log('DONE WAITING ON MAIN HERE1')").unwrap();
+        result
     }
 
     fn call_non_blocking(&self, f: impl FnOnce(&ActiveEventLoop) + Send + 'static) {
@@ -361,14 +444,38 @@ impl WrappedActiveEventLoop {
                 f(event_loop);
             }))
             .unwrap();
+
+        self.event_loop_waker.wake();
+
+        // TODO: Wake up browser main here.
     }
 
     /// Corresponds to [winit::event_loop::ActiveEventLoop::create_window]
     pub fn create_window(
         &self,
-        window_attributes: WindowAttributes,
+        mut window_attributes: WindowAttributes,
+        canvas_selector: Option<String>,
     ) -> Result<winit::window::Window, winit::error::OsError> {
-        self.call(move |e| e.create_window(window_attributes))
+        use wasm_bindgen::JsCast;
+        use winit::platform::web::WindowAttributesExtWebSys;
+
+        self.call(move |e| {
+            if let Some(selector) = &canvas_selector {
+                let window = web_sys::window().unwrap();
+                let document = window.document().unwrap();
+                let canvas = document
+                    .query_selector(selector)
+                    .expect("Cannot query for canvas element.");
+                if let Some(canvas) = canvas {
+                    let canvas = canvas.dyn_into::<web_sys::HtmlCanvasElement>().ok();
+                    window_attributes = window_attributes.with_canvas(canvas);
+                } else {
+                    panic!("Cannot find element: {}.", selector);
+                }
+            }
+
+            e.create_window(window_attributes)
+        })
     }
 
     /// Corresponds to [winit::event_loop::ActiveEventLoop::create_custom_cursor]
@@ -418,6 +525,51 @@ impl WrappedActiveEventLoop {
     /// Corresponds to [winit::event_loop::ActiveEventLoop::owned_display_handle]
     pub fn owned_display_handle(&self) -> winit::event_loop::OwnedDisplayHandle {
         self.call(move |e: &ActiveEventLoop| e.owned_display_handle())
+    }
+
+    /// Corresponds to [winit::window::Window::request_redraw]
+    /// On web with `offscreen_canvas` enabled this will correctly request
+    /// the animation frame on the local thread.
+    pub fn request_redraw(&self, window: &winit::window::Window) {
+        use wasm_bindgen::JsCast;
+
+        thread_local! {
+            static ANIMATION_FRAME_CLOSURE: OnceCell<wasm_bindgen::closure::Closure<dyn Fn()>> = OnceCell::new();
+        }
+
+        web_sys::js_sys::eval("console.log('REQUESTING REDRAW0')").unwrap();
+        let window_id: WindowId = window.id();
+
+        // Deduplicate multiple redraw requests.
+        let to_redraw = self.redrawing.borrow_mut().insert(window_id);
+
+        if to_redraw {
+            ANIMATION_FRAME_CLOSURE.with(|w| {
+                let closure = w.get_or_init(|| {
+                    wasm_bindgen::closure::Closure::new(move || {
+                        web_sys::js_sys::eval("console.log('REQUEST ANIMATION FRAME CALLED')")
+                            .unwrap();
+
+                        ENTRY_POINT.with(|entry_point| {
+                            (entry_point.borrow_mut().as_mut())(EntryReason::AnimationFrame {
+                                window_id,
+                            });
+                        });
+                    })
+                });
+
+                web_sys::js_sys::eval("console.log('REQUESTING REDRAW1')").unwrap();
+
+                web_sys::js_sys::eval("self")
+                    .unwrap()
+                    .dyn_into::<web_sys::DedicatedWorkerGlobalScope>()
+                    .unwrap()
+                    .request_animation_frame(closure.as_ref().unchecked_ref())
+                    .unwrap();
+            });
+        } else {
+            web_sys::js_sys::eval("console.log('DEDUPED ANIMATION FRAME')").unwrap();
+        }
     }
 }
 

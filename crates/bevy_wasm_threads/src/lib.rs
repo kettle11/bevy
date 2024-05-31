@@ -4,6 +4,7 @@ use send_wrapper::SendWrapper;
 use std::cell::RefCell;
 use std::sync::{mpsc::*, Arc, Mutex, OnceLock};
 use wasm_bindgen::prelude::*;
+use web_sys::MessageEvent;
 
 #[derive(Debug)]
 struct BrowserMainThreadChannels {
@@ -15,6 +16,22 @@ static BROWSER_MAIN_CHANNELS: OnceLock<BrowserMainThreadChannels> = OnceLock::ne
 
 thread_local! {
     static BEVY_MAIN_WORKER: RefCell<Option<web_sys::Worker>> = RefCell::new(None);
+    static BROWSER_MAIN_TASKS: RefCell<Option<Receiver<Box<dyn FnOnce() + Send + 'static>>>> = RefCell::new(None);
+}
+
+/// Call this on the browser's main thread to dispatch tasks sent to it.
+pub fn handle_browser_main_tasks() {
+    //web_sys::js_sys::eval("console.log('RUNNING BROWSER MAIN TASKS')").unwrap();
+
+    BROWSER_MAIN_TASKS.with(|v| {
+        if let Ok(v) = v.try_borrow_mut() {
+            let browser_main_tasks_receiver = v.as_ref().unwrap();
+            while let Ok(task) = browser_main_tasks_receiver.try_recv() {
+                web_sys::js_sys::eval("console.log('RUNNING BROWSER MAIN TASK')").unwrap();
+                task();
+            }
+        }
+    });
 }
 
 /// Call this with a function that wraps normal Bevy app initialization
@@ -25,14 +42,11 @@ pub fn run_bevy_main(f: impl FnOnce() + Send + 'static) {
     let (to_browser_main_tasks_sender, browser_main_tasks_receiver) =
         std::sync::mpsc::channel::<Box<dyn FnOnce() + Send + 'static>>();
 
+    BROWSER_MAIN_TASKS.with(|v| *v.borrow_mut() = Some(browser_main_tasks_receiver));
+
     // This runs tasks sent to the main thread by other threads.
     let run_browser_main_tasks = wasm_bindgen::closure::Closure::wrap(Box::new(move || {
-        web_sys::js_sys::eval("console.log('RUNNING BROWSER MAIN TASKS')").unwrap();
-
-        while let Ok(task) = browser_main_tasks_receiver.try_recv() {
-            web_sys::js_sys::eval("console.log('RUNNING TASK')").unwrap();
-            task();
-        }
+        handle_browser_main_tasks();
     }) as Box<dyn FnMut()>);
 
     // Setup the waker for the main thread.
@@ -113,12 +127,17 @@ pub fn run_on_browser_main(f: impl FnOnce() + Send + 'static) {
 pub fn run_and_block_on_browser_main<Return: Send + 'static>(
     f: impl FnOnce() -> Return + Send + 'static,
 ) -> Return {
+    web_sys::js_sys::eval("console.log('BLOCKING ON BROWSER MAIN')").unwrap();
+
     let (sender, receiver) = std::sync::mpsc::channel();
     run_on_browser_main(Box::new(move || {
         let result = f();
         sender.send(result).unwrap();
     }));
-    receiver.recv().unwrap()
+    let result = receiver.recv().unwrap();
+
+    web_sys::js_sys::eval("console.log('FINISHED BLOCK ON BROWSER MAIN')").unwrap();
+    result
 }
 
 /// Must be called on the browser's main thread!
@@ -174,25 +193,43 @@ fn spawn_web_worker(
 
 /// Sets this web workers message handler
 pub fn set_self_on_message(f: Box<dyn FnMut(web_sys::MessageEvent) + 'static>) {
-    let _self = web_sys::js_sys::eval("self")
-        .unwrap()
-        .dyn_into::<web_sys::DedicatedWorkerGlobalScope>()
-        .unwrap();
+    ENTRY_POINT.with(|w| {
+        *w.borrow_mut() = Some(Box::new(f));
+    });
+}
 
-    let entry_point = wasm_bindgen::closure::Closure::wrap(f);
-    _self.set_onmessage(Some(entry_point.as_ref().unchecked_ref()));
-    entry_point.forget();
+thread_local! {
+    static ENTRY_POINT: RefCell<Option<Box<dyn FnMut(web_sys::MessageEvent)>>> = RefCell::new(None);
 }
 
 #[wasm_bindgen]
 /// The WebWorker will call this to call the user provided entry point.
 pub fn bevy_web_worker_entry_point(ptr: u32) -> u32 {
-    // Bevy web workers can override the entry point.
-    // Presently this is only used to receive transferable objects from the main thread.
+    // The initial entry can only be called once but after
+    // the worker may assign a new entry point.
+    let mut entry_point = ENTRY_POINT
+        .with(|w: &RefCell<Option<Box<dyn FnMut(web_sys::MessageEvent)>>>| w.borrow_mut().take());
 
-    #[allow(unsafe_code)]
-    let p: Box<WorkerContext> = unsafe { Box::from_raw(ptr as *mut _) };
-    (p.0)();
+    if let Some(entry_point) = &mut entry_point {
+        let message_event = web_sys::js_sys::eval("self.web_worker_message_event")
+            .unwrap()
+            .dyn_into::<MessageEvent>()
+            .unwrap();
+
+        entry_point(message_event);
+    } else if ptr != 0 {
+        // SAFETY: Ptr value is always initialized before being sent.
+        #[allow(unsafe_code)]
+        let p: Box<WorkerContext> = unsafe { Box::from_raw(ptr as *mut _) };
+        (p.0)();
+    }
+
+    ENTRY_POINT.with(|w| {
+        let mut w = w.borrow_mut();
+        if w.is_none() {
+            *w = entry_point;
+        }
+    });
     0
 }
 

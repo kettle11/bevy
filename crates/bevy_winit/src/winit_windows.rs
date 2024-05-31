@@ -49,6 +49,8 @@ impl WinitWindows {
         handlers: &mut WinitActionRequestHandlers,
         accessibility_requested: &AccessibilityRequested,
     ) -> &WindowWrapper<WinitWindow> {
+        bevy_log::debug!("Hi0");
+
         let mut winit_window_attributes = WinitWindow::default_attributes();
 
         // Due to a UIA limitation, winit windows need to be invisible for the
@@ -192,9 +194,11 @@ impl WinitWindows {
 
         #[cfg(target_arch = "wasm32")]
         {
+            // TODO: Make this run even if the OffscreenCanvas feature is disabled.
             use wasm_bindgen::JsCast;
             use winit::platform::web::WindowAttributesExtWebSys;
 
+            /*
             if let Some(selector) = &window.canvas {
                 let window = web_sys::window().unwrap();
                 let document = window.document().unwrap();
@@ -208,13 +212,16 @@ impl WinitWindows {
                     panic!("Cannot find element: {}.", selector);
                 }
             }
+            */
 
             winit_window_attributes =
                 winit_window_attributes.with_prevent_default(window.prevent_default_event_handling);
             winit_window_attributes = winit_window_attributes.with_append(true);
         }
 
-        let winit_window = event_loop.create_window(winit_window_attributes).unwrap();
+        let winit_window = event_loop
+            .create_window(winit_window_attributes, window.canvas.clone())
+            .unwrap();
         let name = window.title.clone();
         prepare_accessibility_for_window(
             &winit_window,

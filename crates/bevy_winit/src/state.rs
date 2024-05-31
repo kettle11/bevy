@@ -127,9 +127,9 @@ impl<T: Event> WinitAppRunnerState<T> {
 
 impl<T: Event> WrappedApplicationHandler<T> for WinitAppRunnerState<T> {
     fn new_events(&mut self, event_loop: &WrappedActiveEventLoop, cause: StartCause) {
-        if event_loop.exiting() {
-            return;
-        }
+        // if event_loop.exiting() {
+        //     return;
+        // }
 
         #[cfg(feature = "trace")]
         let _span = bevy_utils::tracing::info_span!("winit event_handler").entered();
@@ -406,6 +406,8 @@ impl<T: Event> WrappedApplicationHandler<T> for WinitAppRunnerState<T> {
     }
 
     fn about_to_wait(&mut self, event_loop: &WrappedActiveEventLoop) {
+        bevy_log::error!("ABOUT TO WAIT");
+
         // create any new windows
         // (even if app did not update, some may have been created by plugin setup)
         let mut create_window =
@@ -576,7 +578,7 @@ impl<T: Event> WrappedApplicationHandler<T> for WinitAppRunnerState<T> {
         if self.redraw_requested && self.lifecycle != AppLifecycle::Suspended {
             let winit_windows = self.world().non_send_resource::<WinitWindows>();
             for window in winit_windows.windows.values() {
-                window.request_redraw();
+                event_loop.request_redraw(window);
             }
             self.redraw_requested = false;
         }
@@ -757,9 +759,7 @@ pub fn winit_runner<T: Event>(mut app: App) -> AppExit {
         error!("winit event loop returned an error: {err}");
     }
 
-    // TODO: Fix this:
-    panic!();
-
+    AppExit::Success
     // If everything is working correctly then the event loop only exits after it's sent an exit code.
     // runner_state.app_exit.unwrap_or_else(|| {
     //     error!("Failed to receive a app exit code! This is a bug");

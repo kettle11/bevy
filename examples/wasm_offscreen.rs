@@ -8,11 +8,23 @@ use bevy::{
 fn main() {
     bevy::winit::WinitOffscreen::init(|| {
         App::new()
-            .add_plugins(DefaultPlugins.set(bevy::log::LogPlugin {
-                filter: "info,wgpu_core=info,wgpu_hal=info,mygame=debug".into(),
-                level: bevy::log::Level::DEBUG,
-                ..Default::default()
-            }))
+            .add_plugins(
+                DefaultPlugins
+                    .set(bevy::log::LogPlugin {
+                        filter: "info,wgpu_core=debug,wgpu_hal=debug,mygame=debug".into(),
+                        level: bevy::log::Level::DEBUG,
+                        ..Default::default()
+                    })
+                    .set(WindowPlugin {
+                        primary_window: Some(Window {
+                            // provide the ID selector string here
+                            canvas: Some("#canvas".into()),
+                            // ... any other window properties ...
+                            ..default()
+                        }),
+                        ..default()
+                    }),
+            )
             .add_systems(Startup, setup)
             .run();
     })
@@ -26,6 +38,7 @@ fn setup(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
+    info!("SETTING UP!");
     commands.spawn(Camera2dBundle::default());
 
     let shapes = [

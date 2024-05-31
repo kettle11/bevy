@@ -79,7 +79,8 @@ impl<T: Event> Plugin for WinitPlugin<T> {
     }
 
     fn build(&self, app: &mut App) {
-        let mut event_loop_builder = EventLoop::<T>::with_user_event();
+        let mut event_loop_builder =
+            EventLoop::<bevy_winit_offscreen::UserEvent<T>>::with_user_event();
 
         // linux check is needed because x11 might be enabled on other platforms.
         #[cfg(all(target_os = "linux", feature = "x11"))]
