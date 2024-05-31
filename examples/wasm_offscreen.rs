@@ -6,12 +6,17 @@ use bevy::{
 };
 
 fn main() {
-    bevy::winit::browser_run_off_main(|| {
+    bevy::winit::WinitOffscreen::init(|| {
         App::new()
-            .add_plugins(DefaultPlugins)
+            .add_plugins(DefaultPlugins.set(bevy::log::LogPlugin {
+                filter: "info,wgpu_core=info,wgpu_hal=info,mygame=debug".into(),
+                level: bevy::log::Level::DEBUG,
+                ..Default::default()
+            }))
             .add_systems(Startup, setup)
             .run();
-    });
+    })
+    .transfer_canvas_to_offscreen("#canvas");
 }
 
 const X_EXTENT: f32 = 900.;

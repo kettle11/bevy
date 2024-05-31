@@ -5,7 +5,6 @@ import init, { bevy_web_worker_entry_point } from "WASM_BINDGEN_SHIM_URL";
 // Once we've got it, initialize it all with the `wasm_bindgen` global we imported via
 // `importScripts`.
 
-
 function runWorker(entryPtr) {
     let complete = bevy_web_worker_entry_point(entryPtr);
     if (complete == 1) {

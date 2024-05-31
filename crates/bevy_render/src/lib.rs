@@ -270,7 +270,8 @@ impl Plugin for RenderPlugin {
                     let mut system_state: SystemState<
                         Query<&RawHandleWrapperHolder, With<PrimaryWindow>>,
                     > = SystemState::new(app.world_mut());
-                    let primary_window = system_state.get(app.world()).get_single().ok().cloned();
+                    let primary_window: Option<RawHandleWrapperHolder> =
+                        system_state.get(app.world()).get_single().ok().cloned();
                     let settings = render_creation.clone();
                     let async_renderer = async move {
                         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
@@ -281,6 +282,7 @@ impl Plugin for RenderPlugin {
                         });
 
                         // SAFETY: Plugins should be set up on the main thread.
+                        #[cfg(not(feature = "offscreen_canvas"))]
                         let surface = primary_window.and_then(|wrapper| unsafe {
                             let maybe_handle = wrapper.0.lock().expect(
                                 "Couldn't get the window handle in time for renderer initialization",
@@ -296,6 +298,20 @@ impl Plugin for RenderPlugin {
                                 None
                             }
                         });
+
+                        #[cfg(feature = "offscreen_canvas")]
+                        let surface = {
+                            let handle = wgpu::SurfaceTarget::OffscreenCanvas(
+                                bevy_winit_offscreen::get_offscreen_canvas(),
+                            );
+
+                            // Initialize with an OffscreenCanvas
+                            Some(
+                                instance
+                                    .create_surface(handle)
+                                    .expect("Failed to create wgpu surface"),
+                            )
+                        };
 
                         let request_adapter_options = wgpu::RequestAdapterOptions {
                             power_preference: settings.power_preference,

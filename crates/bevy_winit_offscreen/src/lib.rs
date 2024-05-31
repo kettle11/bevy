@@ -1,19 +1,117 @@
 //! This crate wraps Winit to more easily allow a browser OffScreenCanvas to be used.
 
+use bevy_utils::hashbrown::HashMap;
 use std::cell::RefCell;
+use wasm_bindgen::JsValue;
 use winit::error::EventLoopError;
 use winit::event::{DeviceEvent, DeviceId, StartCause, WindowEvent};
 use winit::event_loop::{self, ActiveEventLoop, EventLoop, EventLoopProxy};
-use winit::platform::web::EventLoopExtWebSys;
+use winit::platform::web::{self, EventLoopExtWebSys};
 use winit::window::{CustomCursorSource, WindowAttributes, WindowId};
 
 #[cfg(target_arch = "wasm32")]
 use std::sync::mpsc::{channel, Receiver, Sender};
 
+enum EntryReason {
+    AnimationFrame,
+    WorkerMessage,
+}
+
 #[cfg(target_arch = "wasm32")]
 thread_local! {
     /// Called when a winit event occurs or an animation frame occurs.
-    static ENTRY_POINT: RefCell<Box<dyn FnMut()>> = RefCell::new(Box::new(|| {}));
+    static ENTRY_POINT: RefCell<Box<dyn FnMut(EntryReason)>> = RefCell::new(Box::new(|_| {}));
+    /// Stores OffscreenCanvases that have been sent to this worker.
+    static OFFSCREEN_CANVASES: RefCell<HashMap<String, web_sys::OffscreenCanvas>> = RefCell::new(HashMap::new());
+}
+
+#[cfg(target_arch = "wasm32")]
+pub struct WinitOffscreen {}
+
+#[cfg(target_arch = "wasm32")]
+impl WinitOffscreen {
+    pub fn init(f: impl FnOnce() + Send + 'static) -> Self {
+        bevy_wasm_threads::run_bevy_main(move || {
+            web_sys::js_sys::eval("console.log('HERE IN BEVY MAIN WAITING FOR CANVAS')").unwrap();
+
+            let mut f = Some(f);
+
+            // Wait for the first transferred canvas before running setup.
+            bevy_wasm_threads::set_self_on_message(Box::new(move |event| {
+                web_sys::js_sys::eval("console.log('RECEIVED CANVAS')").unwrap();
+
+                check_for_transferred_canvas(&event);
+                (f.take().unwrap())();
+            }));
+        });
+        Self {}
+    }
+
+    /// Sends the canvas specified to the OffScreen thread.
+    /// This must be called on any canvas that will be used by Bevy
+    /// *before* Bevy itself is initialized and run.
+    pub fn transfer_canvas_to_offscreen(&self, selector: &str) {
+        use wasm_bindgen::JsCast;
+
+        let window: web_sys::Window = web_sys::window().unwrap();
+        let document: web_sys::Document = window.document().unwrap();
+
+        let canvas = document
+            .query_selector(selector)
+            .expect("Cannot query for canvas element.");
+        if let Some(canvas) = canvas {
+            let canvas = canvas
+                .dyn_into::<web_sys::HtmlCanvasElement>()
+                .expect("Expected a canvas selector");
+
+            let offscreen_canvas: web_sys::OffscreenCanvas =
+                canvas.transfer_control_to_offscreen().unwrap();
+
+            let message = web_sys::js_sys::Object::new();
+            web_sys::js_sys::Reflect::set(&message, &"offscreen_canvas".into(), &offscreen_canvas)
+                .unwrap();
+
+            web_sys::js_sys::Reflect::set(
+                &message,
+                &"offscreen_canvas_name".into(),
+                &selector.into(),
+            )
+            .unwrap();
+
+            bevy_wasm_threads::post_message_to_bevy_main(&message, &[&offscreen_canvas]);
+        } else {
+            panic!("Cannot find canvas to transfer: {}.", selector);
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn check_for_transferred_canvas(event: &web_sys::MessageEvent) {
+    use wasm_bindgen::JsCast;
+
+    let data = event.data();
+    if let Ok(value) = web_sys::js_sys::Reflect::get(&data, &"offscreen_canvas".into()) {
+        let offscreen_canvas = value
+            .dyn_into::<web_sys::OffscreenCanvas>()
+            .expect("Expected a canvas selector");
+
+        let name = web_sys::js_sys::Reflect::get(&data, &"offscreen_canvas_name".into()).unwrap();
+        let name = name.as_string().unwrap();
+        OFFSCREEN_CANVASES.with(|w| w.borrow_mut().insert(name, offscreen_canvas));
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+/// Gets an arbitrary OffscreenCanvas if one has been sent
+/// with [transfer_canvas_to_offscreen]
+pub fn get_offscreen_canvas() -> web_sys::OffscreenCanvas {
+    OFFSCREEN_CANVASES.with(|w| {
+        w.borrow_mut()
+            .values()
+            .next()
+            .expect("No offscreen canvas available. Use `transfer_canvas_to_offscreen` first.")
+            .clone()
+    })
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -106,6 +204,8 @@ enum WinitEvent<T> {
     MemoryWarning,
 }
 
+/// Corresponds to [winit::event_loop::EventLoop]
+/// but `WrappedEventLoop` can be used from off the browser's main thread
 pub struct WrappedEventLoop<T: 'static> {
     #[cfg(target_arch = "wasm32")]
     browser_main_event_loop: bevy_wasm_threads::BrowserMainType<EventLoop<T>>,
@@ -115,6 +215,7 @@ pub struct WrappedEventLoop<T: 'static> {
 }
 
 impl<T: Send> WrappedEventLoop<T> {
+    /// Builds the `WrappedEventLoop`
     pub fn build(
         mut event_loop_builder: winit::event_loop::EventLoopBuilder<T>,
     ) -> Result<WrappedEventLoop<T>, EventLoopError> {
@@ -180,7 +281,15 @@ impl<T: Send> WrappedEventLoop<T> {
             };
 
             ENTRY_POINT.with(|entry_point| {
-                *entry_point.borrow_mut() = Box::new(move || {
+                *entry_point.borrow_mut() = Box::new(move |entry_reason| {
+                    match entry_reason {
+                        EntryReason::AnimationFrame => {
+                            // TODO: Insert animation frame
+                            todo!()
+                        }
+                        _ => {}
+                    }
+
                     // Respond to incoming winit events
                     while let Ok(event) = to_bevy_main_receiver.try_recv() {
                         match event {
@@ -208,6 +317,15 @@ impl<T: Send> WrappedEventLoop<T> {
                 });
             });
 
+            // When this worker thread receives a message call the entry point.
+            bevy_wasm_threads::set_self_on_message(Box::new(move |event| {
+                check_for_transferred_canvas(&event);
+
+                ENTRY_POINT.with(|entry_point| {
+                    (entry_point.borrow_mut())(EntryReason::WorkerMessage);
+                })
+            }));
+
             // Throw an error that imitate's Winit's control flow hack.
             // This unwinds the stack and prevents a return.
             wasm_bindgen::throw_str(
@@ -220,6 +338,7 @@ impl<T: Send> WrappedEventLoop<T> {
     }
 }
 
+/// Wraps [winit::event_loop::ActiveEventLoop] so that it can be used from off the browser's main thread on web.
 pub struct WrappedActiveEventLoop {
     to_browser_main_sender: Sender<Box<dyn FnOnce(&ActiveEventLoop) + Send + 'static>>,
 }

@@ -41,7 +41,7 @@ pub mod winit_event;
 mod winit_windows;
 
 #[cfg(feature = "offscreen_canvas")]
-pub use bevy_wasm_threads::browser_run_off_main;
+pub use bevy_winit_offscreen::WinitOffscreen;
 
 /// [`AndroidApp`] provides an interface to query the application state as well as monitor events
 /// (for example lifecycle and input events).

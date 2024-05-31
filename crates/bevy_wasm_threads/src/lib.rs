@@ -19,7 +19,7 @@ thread_local! {
 
 /// Call this with a function that wraps normal Bevy app initialization
 /// to run Bevy off of the browser's main thread.
-pub fn browser_run_off_main(f: impl FnOnce() + Send + 'static) {
+pub fn run_bevy_main(f: impl FnOnce() + Send + 'static) {
     bevy_utils::tracing::info!("Spawning Bevy's main web worker");
 
     let (to_browser_main_tasks_sender, browser_main_tasks_receiver) =
@@ -52,7 +52,6 @@ pub fn browser_run_off_main(f: impl FnOnce() + Send + 'static) {
         let bevy_main_waker_worker = spawn_web_worker(
             move || {
                 while let Ok(_) = to_browser_main_waker_receiver.recv() {
-                    web_sys::js_sys::eval("console.log('Posting to main')").unwrap();
                     web_sys::js_sys::eval("self.postMessage(0)").unwrap();
                 }
             },
@@ -66,7 +65,8 @@ pub fn browser_run_off_main(f: impl FnOnce() + Send + 'static) {
     run_browser_main_tasks.forget();
 
     // Setup
-    let bevy_main_worker = spawn_web_worker(move || f(), Some("bevy_main"));
+    let bevy_main_worker = spawn_web_worker(f, Some("bevy_main"));
+
     BEVY_MAIN_WORKER.with(|m| {
         *m.borrow_mut() = Some(bevy_main_worker);
     });
@@ -74,11 +74,23 @@ pub fn browser_run_off_main(f: impl FnOnce() + Send + 'static) {
 
 /// This will panic if called off the browser's main thread.
 pub fn wake_bevy_main() {
+    post_message_to_bevy_main(&JsValue::NULL, &[])
+}
+
+/// Posts a message to the Bevy main thread.
+pub fn post_message_to_bevy_main(
+    value: &wasm_bindgen::JsValue,
+    transferables: &[&wasm_bindgen::JsValue],
+) {
+    let transferring: web_sys::js_sys::Array = web_sys::js_sys::Array::new();
+    for t in transferables {
+        transferring.push(t);
+    }
     BEVY_MAIN_WORKER.with(|m| {
         m.borrow()
             .as_ref()
             .unwrap()
-            .post_message(&wasm_bindgen::JsValue::NULL)
+            .post_message_with_transfer(value, &transferring)
             .unwrap();
     });
 }
@@ -158,6 +170,18 @@ fn spawn_web_worker(
     .unwrap();
 
     worker
+}
+
+/// Sets this web workers message handler
+pub fn set_self_on_message(f: Box<dyn FnMut(web_sys::MessageEvent) + 'static>) {
+    let _self = web_sys::js_sys::eval("self")
+        .unwrap()
+        .dyn_into::<web_sys::DedicatedWorkerGlobalScope>()
+        .unwrap();
+
+    let entry_point = wasm_bindgen::closure::Closure::wrap(f);
+    _self.set_onmessage(Some(entry_point.as_ref().unchecked_ref()));
+    entry_point.forget();
 }
 
 #[wasm_bindgen]

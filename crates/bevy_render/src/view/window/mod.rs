@@ -456,10 +456,28 @@ pub fn create_surfaces(
             .surfaces
             .entry(window.entity)
             .or_insert_with(|| {
+                #[cfg(feature = "offscreen_canvas")]
+                let surface_target = {
+                    match window.handle.window_handle {
+                        wgpu::rwh::RawWindowHandle::Web(handle) => {
+                            panic!("HANDLE HERE: {:?}", handle);
+                            // bevy_wasm_threads::run_and_block_on_browser_main(move || {
+                            //     handle.id;
+                            //     let id = js_value.dyn_into::<web_sys::Element>().unwrap().id();
+                            // })
+                        }
+                        _ => panic!(),
+                    }
+                };
+
+                #[cfg(not(feature = "offscreen_canvas"))]
                 let surface_target = SurfaceTargetUnsafe::RawHandle {
                     raw_display_handle: window.handle.display_handle,
                     raw_window_handle: window.handle.window_handle,
                 };
+
+                // TODO: OffscreenCanvas logic here.
+
                 // SAFETY: The window handles in ExtractedWindows will always be valid objects to create surfaces on
                 let surface = unsafe {
                     // NOTE: On some OSes this MUST be called from the main thread.

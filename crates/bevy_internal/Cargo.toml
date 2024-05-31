@@ -185,7 +185,10 @@ ios_simulator = ["bevy_pbr?/ios_simulator", "bevy_render?/ios_simulator"]
 # Enable built in global state machines
 bevy_state = ["dep:bevy_state", "bevy_app/bevy_state"]
 
-offscreen_canvas = ["bevy_winit/offscreen_canvas"]
+offscreen_canvas = [
+  "bevy_winit/offscreen_canvas",
+  "bevy_render/offscreen_canvas",
+]
 
 [dependencies]
 # bevy

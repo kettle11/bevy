@@ -21,6 +21,7 @@ web-sys = { version = "0.3", features = [
     "DedicatedWorkerGlobalScope",
     "WorkerOptions",
     "WorkerType",
+    "OffscreenCanvas",
 ] }
 bevy_wasm_threads = { path = "../bevy_wasm_threads", version = "0.14.0-dev" }
 bevy_utils = { path = "../bevy_utils", version = "0.14.0-dev" }
